@@ -30,19 +30,41 @@ std::vector<uint8_t> xorVectors(const std::vector<uint8_t>& a, const std::vector
 }
 
 std::vector<uint8_t> convertByteToBit(const std::vector<uint8_t>& byteVector) {
+    if (byteVector.empty()) {
+        std::cerr << "Cảnh báo: Vector byte đầu vào rỗng" << std::endl;
+        return {};
+    }
+    
+    if (byteVector.size() != 8 && byteVector.size() % 8 != 0) {
+        std::cerr << "Cảnh báo: Kích thước không phải bội số của 8 bytes: " 
+                  << byteVector.size() << " bytes" << std::endl;
+    }
+    
     std::vector<uint8_t> bitVector;
-    bitVector.reserve(byteVector.size() * 8); // 6 bytes * 8 = 48 bits
+    bitVector.reserve(byteVector.size() * 8);
 
     for (uint8_t byte : byteVector) {
         for (int i = 7; i >= 0; --i) { 
-            bitVector.push_back((byte >> i) & 1); // Lấy từng bit từ MSB đến LSB
+            bitVector.push_back((byte >> i) & 1);
         }
     }
     return bitVector;
 }
 
 std::vector<uint8_t> convertBitToByte(const std::vector<uint8_t>& bitBlock) {
+    if (bitBlock.empty()) {
+        std::cerr << "Cảnh báo: Vector bit đầu vào rỗng" << std::endl;
+        return {};
+    }
+    
+    if (bitBlock.size() % 8 != 0) {
+        std::cerr << "Cảnh báo: Số lượng bit không phải bội số của 8: " 
+                  << bitBlock.size() << " bits" << std::endl;
+    }
+    
     std::vector<uint8_t> byteBlock;
+    byteBlock.reserve(bitBlock.size() / 8);
+    
     for (size_t i = 0; i < bitBlock.size(); i += 8) {
         uint8_t byte = 0;
         for (size_t j = 0; j < 8; ++j) {
@@ -52,20 +74,19 @@ std::vector<uint8_t> convertBitToByte(const std::vector<uint8_t>& bitBlock) {
     }
     return byteBlock;
 }
-// thêm padding vào các kí tự cuối cho đủ 64 bit
+
 std::vector<uint8_t> addPadding(const std::vector<uint8_t>& data) {
     std::vector<uint8_t> paddedData = data;
-    size_t paddingSize = 8 - (data.size() % 8);  // Số byte cần đệm
+    size_t paddingSize = 8 - (data.size() % 8);
     for (size_t i = 0; i < paddingSize; ++i) {
-        paddedData.push_back(paddingSize);  // Giá trị padding bằng chính số byte được thêm vào
+        paddedData.push_back(paddingSize);
     }
     return paddedData;
 }
-// loại bỏ padding khi giải mã
+
 std::vector<uint8_t> removePadding(const std::vector<uint8_t>& data) {
     if (data.empty()) return data;
     uint8_t paddingSize = data.back();
-    if (paddingSize > 8) return data;  // Tránh lỗi nếu dữ liệu sai
+    if (paddingSize > 8 || paddingSize > data.size()) return data;
     return std::vector<uint8_t>(data.begin(), data.end() - paddingSize);
 }
-
