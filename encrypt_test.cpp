@@ -2,8 +2,8 @@
 #include <iostream>
 
 int main() {
-    std::string inputFile = "plaintext.txt";
-    std::string encryptedFile = "ciphertext.txt";
+    std::string inputFile = "plaintext.run";
+    std::string encryptedFile = "ciphertext.run";
 
     // 🔹 Khóa 64-bit
 std::vector<uint8_t> key = {

@@ -2,8 +2,8 @@
 #include <iostream>
 
 int main() {
-    std::string encryptedFile = "ciphertext.txt";
-    std::string decryptedFile = "decrypted.txt";
+    std::string encryptedFile = "ciphertext.run";
+    std::string decryptedFile = "decrypted.run";
 
     // 🔹 Khóa 64-bit
 std::vector<uint8_t> key = {
