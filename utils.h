@@ -29,5 +29,7 @@ std::vector<uint8_t> addPadding(const std::vector<uint8_t>& data);
 
 // bỏ padding khi giải mã
 std::vector<uint8_t> removePadding(const std::vector<uint8_t>& data);
+// Thêm vào cuối file utils.h
+std::vector<uint8_t> normalizeDESKey(const std::vector<uint8_t>& key);
 #endif // UTILS_H
 

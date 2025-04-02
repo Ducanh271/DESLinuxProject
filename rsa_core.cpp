@@ -326,35 +326,28 @@ std::vector<uint8_t> rsaDecrypt(const std::vector<uint8_t>& data, const RSAKey& 
 std::vector<uint8_t> rsaDecryptDESKey(const std::vector<uint8_t>& encryptedKey, const RSAKey& privateKey) {
     std::vector<uint8_t> decryptedData = rsaDecrypt(encryptedKey, privateKey);
     
-    if (decryptedData.size() == 8) {
-        return decryptedData;
-    } else if (decryptedData.size() > 8) {
-        std::vector<uint8_t> desKey(8);
-        
-        // Lấy 8 bytes cuối cùng nếu kích thước lớn hơn
-        if (decryptedData.size() >= 8) {
-            for (int i = 0; i < 8; i++) {
-                desKey[i] = decryptedData[i];
-            }
-        }
-        
-        std::cout << "Đã điều chỉnh kích thước khóa DES từ " << decryptedData.size() 
-                  << " bytes xuống 8 bytes" << std::endl;
-        return desKey;
-    } else {
-        std::vector<uint8_t> desKey(8, 0);
-        for (size_t i = 0; i < decryptedData.size(); i++) {
-            desKey[i] = decryptedData[i];
-        }
-        
-        std::cout << "Đã điều chỉnh kích thước khóa DES từ " << decryptedData.size() 
-                  << " bytes lên 8 bytes" << std::endl;
-        return desKey;
+    // Luôn trả về đúng 8 bytes
+    std::vector<uint8_t> desKey(8, 0);
+    
+    if (decryptedData.empty()) {
+        std::cerr << "❌ Lỗi: Không thể giải mã khóa DES!" << std::endl;
+        return desKey;  // Trả về khóa toàn 0 trong trường hợp lỗi
     }
+    
+    // Lấy tối đa 8 bytes đầu tiên từ dữ liệu giải mã
+    for (size_t i = 0; i < std::min(decryptedData.size(), size_t(8)); i++) {
+        desKey[i] = decryptedData[i];
+    }
+    
+    // Log kích thước khóa
+    std::cout << "🔑 Kích thước khóa DES sau khi giải mã: " << decryptedData.size() 
+              << " bytes, đã chuẩn hóa thành 8 bytes" << std::endl;
+    
+    return desKey;
 }
 
 std::vector<uint8_t> generateRandomDESKey() {
-    std::vector<uint8_t> key(8);
+    std::vector<uint8_t> key(8, 0);  // Khởi tạo với 8 bytes
     
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -364,5 +357,6 @@ std::vector<uint8_t> generateRandomDESKey() {
         key[i] = static_cast<uint8_t>(dis(gen));
     }
     
+    std::cout << "🔑 Đã tạo khóa DES ngẫu nhiên 8 bytes" << std::endl;
     return key;
 }

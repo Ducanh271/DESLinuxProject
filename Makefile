@@ -7,7 +7,8 @@ GMP_LIBS = -lgmp
 SSL_LIBS = -lssl -lcrypto  # Thêm thư viện OpenSSL
 
 # Danh sách các file nguồn
-SRCS = encryption.cpp decryption.cpp feistel.cpp file_io.cpp key_schedule.cpp permutation.cpp sbox.cpp utils.cpp rsa_core.cpp
+SRCS = encryption.cpp decryption.cpp feistel.cpp file_io.cpp key_schedule.cpp \
+       permutation.cpp sbox.cpp utils.cpp rsa_core.cpp thread_utils.cpp
 
 # Các file .o (object)
 OBJS = $(SRCS:.cpp=.o)
@@ -68,3 +69,4 @@ distclean: clean
 	rm -rf $(DIRS)
 
 .PHONY: all clean distclean directories
+

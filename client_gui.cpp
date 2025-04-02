@@ -30,7 +30,7 @@
 #define CHECKSUM_BUFFER_SIZE 8192
 #define KEY_MARKER "PUBLIC_KEY_TRANSFER_V2"
 #define TRANSMISSION_END_MARKER "END_OF_TRANSMISSION"
-#define SOCKET_TIMEOUT_SEC 60
+#define SOCKET_TIMEOUT_SEC 360
 
 GtkWidget *status_label;
 GtkWidget *select_button;
@@ -188,11 +188,10 @@ void load_client_keys() {
     }
 }
 
-void send_public_key_thread(const std::string& client_ip) {
-    add_log("🔄 Tạo socket để gửi key...");
-    int sock = 0;
-    struct sockaddr_in client_addr;
-    sock = socket(AF_INET, SOCK_STREAM, 0);
+void send_public_key_thread(const std::string& server_ip) {
+    add_log("🔄 Bắt đầu gửi client public key đến server " + server_ip);
+    add_log("🔄 Tạo socket để gửi client public key...");
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         add_log("❌ Tạo socket thất bại! Lỗi: " + std::string(strerror(errno)));
         return;
@@ -201,88 +200,116 @@ void send_public_key_thread(const std::string& client_ip) {
     try {
         setSocketTimeout(sock, SOCKET_TIMEOUT_SEC);
         
-        add_log("🔄 Chuẩn bị kết nối đến " + client_ip + ":" + std::to_string(CLIENT_PORT));
-        client_addr.sin_family = AF_INET;
-        client_addr.sin_port = htons(CLIENT_PORT);
-        if (inet_pton(AF_INET, client_ip.c_str(), &client_addr.sin_addr) <= 0) {
-            add_log("❌ Địa chỉ IP không hợp lệ! Lỗi: " + std::string(strerror(errno)));
+        // Kết nối đến SERVER qua port 8080
+        add_log("🔄 Chuẩn bị kết nối đến server " + server_ip + ":" + std::to_string(PORT));
+        struct sockaddr_in server_addr;
+        server_addr.sin_family = AF_INET;
+        server_addr.sin_port = htons(PORT);  // PORT = 8080 (server port)
+        if (inet_pton(AF_INET, server_ip.c_str(), &server_addr.sin_addr) <= 0) {
+            add_log("❌ Địa chỉ IP server không hợp lệ! Lỗi: " + std::string(strerror(errno)));
             close(sock);
             return;
         }
         
-        add_log("🔄 Đang kết nối...");
-        if (connect(sock, (struct sockaddr*)&client_addr, sizeof(client_addr)) < 0) {
-            add_log("❌ Kết nối thất bại! Lỗi: " + std::string(strerror(errno)));
-            add_log("Địa chỉ: " + client_ip + ", Cổng: " + std::to_string(CLIENT_PORT));
+        add_log("🔄 Đang kết nối đến server...");
+        if (connect(sock, (struct sockaddr*)&server_addr, sizeof(server_addr)) < 0) {
+            add_log("❌ Kết nối đến server thất bại! Lỗi: " + std::string(strerror(errno)));
+            add_log("Địa chỉ: " + server_ip + ", Cổng: " + std::to_string(PORT));
             close(sock);
             return;
         }
         
-        add_log("✅ Đã kết nối đến client để gửi public key!");
+        add_log("✅ Đã kết nối đến server để gửi client public key!");
         
-        // Gửi marker
-        std::string key_marker = KEY_MARKER;
+        // Gửi marker - Sử dụng marker riêng cho client public key
+        std::string key_marker = "CLIENT_PUBLIC_KEY_TRANSFER";
         if (send(sock, key_marker.c_str(), key_marker.size(), 0) != (ssize_t)key_marker.size()) {
             add_log("❌ Lỗi khi gửi key marker! Lỗi: " + std::string(strerror(errno)));
             close(sock);
             return;
         }
         
-        // Thêm delay nhỏ để đảm bảo client có thời gian xử lý
-        usleep(100000);  // 100ms
+        usleep(100000);  // 100ms delay
         
-        // Thiết lập timeout cho recv
+        // Chờ phản hồi READY từ server
         fd_set readfds;
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
         
         struct timeval tv;
-        tv.tv_sec = 5;  // 5 giây
+        tv.tv_sec = 5;
         tv.tv_usec = 0;
         
-        add_log("🔄 Đang chờ phản hồi từ client...");
-        int activity = select(sock + 1, &readfds, NULL, NULL, &tv);
-        if (activity <= 0) {
-            add_log("❌ Timeout khi chờ phản hồi từ client!");
+        add_log("🔄 Đang chờ phản hồi từ server...");
+        if (select(sock + 1, &readfds, NULL, NULL, &tv) <= 0) {
+            add_log("❌ Timeout khi chờ phản hồi từ server!");
             close(sock);
             return;
         }
         
         char response[128] = {0};
         if (recv(sock, response, sizeof(response) - 1, 0) <= 0) {
-            add_log("❌ Không nhận được phản hồi từ client! Lỗi: " + std::string(strerror(errno)));
+            add_log("❌ Không nhận được phản hồi từ server! Lỗi: " + std::string(strerror(errno)));
             close(sock);
             return;
         }
         
         if (std::string(response) != "READY") {
-            add_log("❌ Client không sẵn sàng nhận key! Phản hồi: " + std::string(response));
+            add_log("❌ Server không sẵn sàng nhận key! Phản hồi: " + std::string(response));
             close(sock);
             return;
         }
         
-        std::ifstream key_file("server_public.key");
+        // Đọc file client_public.key
+        std::ifstream key_file("client_public.key", std::ios::binary);
         if (!key_file) {
-            add_log("❌ Không thể mở file key!");
+            add_log("❌ Không thể mở file client_public.key!");
             close(sock);
             return;
         }
         
-        std::string key_content((std::istreambuf_iterator<char>(key_file)), std::istreambuf_iterator<char>());
+        // Đọc nội dung file vào buffer
+        key_file.seekg(0, std::ios::end);
+        size_t file_size = key_file.tellg();
+        key_file.seekg(0, std::ios::beg);
+        
+        // Kiểm tra kích thước file
+        if (file_size <= 0 || file_size > 10000) {
+            add_log("❌ Kích thước file key không hợp lệ: " + std::to_string(file_size) + " bytes");
+            close(sock);
+            return;
+        }
+        
+        std::string key_content(file_size, '\0');
+        key_file.read(&key_content[0], file_size);
         key_file.close();
         
-        std::string checksum = calculateMD5Checksum("server_public.key");
-        add_log("🔐 MD5 checksum của key: " + checksum);
+        std::string checksum = calculateMD5Checksum("client_public.key");
+        add_log("🔐 MD5 checksum của client public key: " + checksum);
         
-        // Gửi kích thước key
-        uint32_t key_size = key_content.size();
+        // Gửi kích thước key (network byte order)
+        uint32_t key_size = htonl(file_size);
         if (send(sock, &key_size, sizeof(key_size), 0) != sizeof(key_size)) {
             add_log("❌ Lỗi khi gửi kích thước key! Lỗi: " + std::string(strerror(errno)));
             close(sock);
             return;
         }
         
-        // Đảm bảo gửi toàn bộ nội dung key
+        // Chờ xác nhận kích thước từ server
+        memset(response, 0, sizeof(response));
+        if (recv(sock, response, sizeof(response) - 1, 0) <= 0) {
+            add_log("❌ Không nhận được xác nhận kích thước từ server!");
+            close(sock);
+            return;
+        }
+        
+        if (std::string(response) != "SIZE_OK") {
+            add_log("❌ Server không chấp nhận kích thước key! Phản hồi: " + std::string(response));
+            close(sock);
+            return;
+        }
+        
+        // Gửi nội dung key
         const char* data = key_content.c_str();
         size_t remaining = key_content.size();
         size_t total_sent = 0;
@@ -298,7 +325,7 @@ void send_public_key_thread(const std::string& client_ip) {
             remaining -= sent;
         }
         
-        add_log("✅ Đã gửi " + std::to_string(total_sent) + " bytes nội dung key");
+        add_log("✅ Đã gửi " + std::to_string(total_sent) + " bytes client public key");
         
         // Gửi checksum
         if (send(sock, checksum.c_str(), checksum.size(), 0) != (ssize_t)checksum.size()) {
@@ -307,7 +334,7 @@ void send_public_key_thread(const std::string& client_ip) {
             return;
         }
         
-        // Gửi marker kết thúc
+        // Gửi end marker
         std::string end_marker = TRANSMISSION_END_MARKER;
         if (send(sock, end_marker.c_str(), end_marker.size(), 0) != (ssize_t)end_marker.size()) {
             add_log("❌ Lỗi khi gửi end marker! Lỗi: " + std::string(strerror(errno)));
@@ -315,47 +342,43 @@ void send_public_key_thread(const std::string& client_ip) {
             return;
         }
         
-        // Chờ phản hồi cuối cùng từ client
+        // Chờ xác nhận cuối cùng
         FD_ZERO(&readfds);
         FD_SET(sock, &readfds);
+        tv.tv_sec = 5;
         
-        tv.tv_sec = 5;  // 5 giây
-        tv.tv_usec = 0;
-        
-        add_log("🔄 Đang chờ xác nhận cuối cùng từ client...");
-        activity = select(sock + 1, &readfds, NULL, NULL, &tv);
-        if (activity <= 0) {
-            add_log("⚠️ Timeout khi chờ xác nhận cuối cùng từ client!");
+        add_log("🔄 Đang chờ xác nhận cuối cùng từ server...");
+        if (select(sock + 1, &readfds, NULL, NULL, &tv) <= 0) {
+            add_log("⚠️ Timeout khi chờ xác nhận từ server!");
             close(sock);
             return;
         }
         
         memset(response, 0, sizeof(response));
         if (recv(sock, response, sizeof(response) - 1, 0) <= 0) {
-            add_log("❌ Không nhận được xác nhận từ client! Lỗi: " + std::string(strerror(errno)));
+            add_log("❌ Không nhận được xác nhận từ server! Lỗi: " + std::string(strerror(errno)));
             close(sock);
             return;
         }
         
         if (std::string(response) == "SUCCESS") {
-            add_log("✅ Client đã nhận public key thành công!");
+            add_log("✅ Server đã nhận client public key thành công!");
         } else {
-            add_log("⚠️ Client báo lỗi: " + std::string(response));
+            add_log("⚠️ Server báo lỗi: " + std::string(response));
         }
         
         shutdown(sock, SHUT_RDWR);
         close(sock);
-        add_log("✅ Kết thúc quá trình gửi public key!");
+        add_log("✅ Kết thúc quá trình gửi client public key!");
     } catch (const std::exception& e) {
-        std::string error_msg = std::string(e.what());
-        add_log("❌ Lỗi: " + error_msg);
+        add_log("❌ Lỗi: " + std::string(e.what()));
         close(sock);
     }
 }
 
 static void send_public_key(GtkWidget *widget, gpointer data) {
     if (!has_client_keys) {
-        add_log("❌ Chưa tạo cặp khóa! Hãy tạo khóa trước.");
+        add_log("❌ Chưa tạo cặp khóa client!");
         return;
     }
     
@@ -364,9 +387,8 @@ static void send_public_key(GtkWidget *widget, gpointer data) {
         server_ip = DEFAULT_SERVER_IP;
     }
     
-    add_log("🔄 Bắt đầu gửi public key đến " + std::string(server_ip));
-    std::thread send_key_thread(send_public_key_thread, std::string(server_ip));
-    send_key_thread.detach();
+    add_log("🔄 Bắt đầu gửi client public key đến server " + std::string(server_ip));
+    std::thread(send_public_key_thread, std::string(server_ip)).detach();
 }
 
 static void view_public_key(GtkWidget *widget, gpointer data) {
@@ -1115,46 +1137,68 @@ static void decrypt_rsa(GtkWidget *widget, gpointer data) {
     gtk_widget_set_sensitive(decrypt_button, TRUE);
 }
 
-static void decrypt_des(GtkWidget *widget, gpointer data) {
+void decrypt_des_thread(GtkWidget *widget) {  // Truyền widget vào hàm
     if (!has_decrypted_des_key || !file_received) {
         add_log("❌ Không thể giải mã DES! Chưa giải mã RSA hoặc không có file.");
+        gdk_threads_add_idle([](gpointer data) -> gboolean {
+            gtk_widget_set_sensitive(decrypt_button, TRUE);
+            return FALSE;
+        }, NULL);
         return;
     }
-    
+
     add_log("🔄 Đang giải mã file với khóa DES...");
-    
+
     if (decrypted_des_key.size() != 8) {
         add_log("⚠️ Cảnh báo: Kích thước khóa DES không phải 8 bytes!");
     }
-    
-    std::vector<uint8_t> binSessionKey = convertByteToBit(decrypted_des_key);
+
+     std::vector<uint8_t> binSessionKey = convertByteToBit(decrypted_des_key);
     add_log("Đã chuyển đổi khóa DES thành " + std::to_string(binSessionKey.size()) + " bits");
-    
     add_log("Đang giải mã file: " + last_encrypted_file);
     last_decrypted_file = DECRYPTED_DIR + std::string("/") + "decrypted_" + last_original_filename;
     add_log("Sẽ lưu tại: " + last_decrypted_file);
-    
+
     try {
         decryptFile(last_encrypted_file, last_decrypted_file, binSessionKey);
-        
+
         struct stat buffer;
         if (stat(last_decrypted_file.c_str(), &buffer) == 0) {
             file_decrypted = true;
             add_log("✅ Đã giải mã file thành công!");
             add_log("📁 File đã giải mã được lưu tại: " + last_decrypted_file);
             add_log("📌 Kích thước file đã giải mã: " + std::to_string(buffer.st_size) + " bytes");
-            
-            // Kiểm tra file đã giải mã
+
             std::string decrypted_checksum = calculateMD5Checksum(last_decrypted_file);
             add_log("🔐 Checksum file đã giải mã: " + decrypted_checksum);
-            
-            gtk_widget_set_sensitive(view_decrypted_button, TRUE);
+
+            // Cập nhật UI từ luồng chính
+            gdk_threads_add_idle([](gpointer data) -> gboolean {
+                gtk_widget_set_sensitive(view_decrypted_button, TRUE);
+                return FALSE;
+            }, NULL);
         } else {
             add_log("❌ Giải mã thất bại: Không tìm thấy file đã giải mã!");
         }
     } catch (const std::exception& e) {
         add_log("❌ Lỗi khi giải mã: " + std::string(e.what()));
     }
+
+    // Kích hoạt lại nút "Giải mã DES" sau khi hoàn tất
+    gdk_threads_add_idle([](gpointer data) -> gboolean {
+        gtk_widget_set_sensitive(decrypt_button, TRUE);
+        return FALSE;
+    }, NULL);
+}
+
+// Callback cho nút "Giải mã DES"
+static void decrypt_des(GtkWidget *widget, gpointer data) {
+    gtk_widget_set_sensitive(decrypt_button, FALSE); // Vô hiệu hóa nút trong khi giải mã
+    add_log("🔄 Bắt đầu giải mã DES trong luồng riêng...");
+
+    // Chạy giải mã trong luồng riêng, truyền widget vào
+    std::thread decrypt_thread(decrypt_des_thread, widget);
+    decrypt_thread.detach(); // Tách luồng để nó chạy độc lập
 }
 
 void client_server_function() {

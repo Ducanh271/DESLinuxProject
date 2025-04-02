@@ -90,3 +90,23 @@ std::vector<uint8_t> removePadding(const std::vector<uint8_t>& data) {
     if (paddingSize > 8 || paddingSize > data.size()) return data;
     return std::vector<uint8_t>(data.begin(), data.end() - paddingSize);
 }
+std::vector<uint8_t> normalizeDESKey(const std::vector<uint8_t>& key) {
+    std::vector<uint8_t> normalizedKey(8, 0);
+    
+    if (key.empty()) {
+        std::cerr << "❌ Cảnh báo: Khóa DES rỗng, sử dụng khóa mặc định!" << std::endl;
+        return normalizedKey;
+    }
+    
+    if (key.size() != 8) {
+        std::cerr << "⚠️ Cảnh báo: Kích thước khóa DES không phải 8 bytes (" 
+                  << key.size() << " bytes)! Đang chuẩn hóa..." << std::endl;
+    }
+    
+    // Sao chép tối đa 8 bytes
+    for (size_t i = 0; i < std::min(key.size(), size_t(8)); i++) {
+        normalizedKey[i] = key[i];
+    }
+    
+    return normalizedKey;
+}

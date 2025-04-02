@@ -31,7 +31,7 @@
 #define CHECKSUM_BUFFER_SIZE 8192
 #define KEY_MARKER "PUBLIC_KEY_TRANSFER_V2"
 #define TRANSMISSION_END_MARKER "END_OF_TRANSMISSION"
-#define SOCKET_TIMEOUT_SEC 60
+#define SOCKET_TIMEOUT_SEC 360
 
 GtkWidget *status_label;
 GtkWidget *start_button;
@@ -789,342 +789,373 @@ void receiveFile(int client_fd) {
     std::string header_str(header);
     
     if (header_str == KEY_MARKER) {
-    add_log("📥 Nhận yêu cầu truyền public key từ client");
-    
-    // Gửi phản hồi sẵn sàng
-    std::string ready_response = "READY";
-    if (send(client_fd, ready_response.c_str(), ready_response.size(), 0) != (ssize_t)ready_response.size()) {
-        add_log("❌ Lỗi khi gửi phản hồi sẵn sàng!");
-        return;
-    }
-    
-    // Thêm delay nhỏ
-    usleep(100000);  // 100ms
-    
-    // Thiết lập timeout cho recv
-    fd_set readfds;
-    FD_ZERO(&readfds);
-    FD_SET(client_fd, &readfds);
-    
-    struct timeval tv;
-    tv.tv_sec = 5;  // 5 giây
-    tv.tv_usec = 0;
-    
-    add_log("🔄 Đang chờ nhận kích thước key...");
-    int activity = select(client_fd + 1, &readfds, NULL, NULL, &tv);
-    if (activity <= 0) {
-        add_log("❌ Timeout khi chờ nhận kích thước key!");
-        return;
-    }
-    
-    // Nhận kích thước key
-    uint32_t key_size;
-    if (recv(client_fd, &key_size, sizeof(key_size), 0) != sizeof(key_size)) {
-        add_log("❌ Lỗi khi nhận kích thước key!");
-        return;
-    }
-    
-    add_log("📥 Kích thước key: " + std::to_string(key_size) + " bytes");
-    
-    // Kiểm tra kích thước hợp lý
-    if (key_size <= 0 || key_size > 10000) {
-        add_log("❌ Kích thước key không hợp lý!");
-        std::string error_response = "ERROR: Invalid key size";
-        send(client_fd, error_response.c_str(), error_response.size(), 0);
-        return;
-    }
-    
-    // Nhận nội dung key
-    std::vector<char> key_buffer(key_size + 1, 0);
-    int total_received = 0;
-    int remaining = key_size;
-    
-    while (total_received < (int)key_size) {
-        // Thiết lập timeout cho mỗi lần nhận
-        FD_ZERO(&readfds);
-        FD_SET(client_fd, &readfds);
+        add_log("📥 Nhận yêu cầu truyền public key từ server");
         
-        tv.tv_sec = 5;  // 5 giây
-        tv.tv_usec = 0;
-        
-        activity = select(client_fd + 1, &readfds, NULL, NULL, &tv);
-        if (activity <= 0) {
-            add_log("❌ Timeout khi chờ nhận nội dung key!");
+        std::string ready_response = "READY";
+        if (send(client_fd, ready_response.c_str(), ready_response.size(), 0) != (ssize_t)ready_response.size()) {
+            add_log("❌ Lỗi khi gửi phản hồi sẵn sàng!");
             return;
         }
         
-        int bytes = recv(client_fd, key_buffer.data() + total_received, remaining, 0);
-        if (bytes <= 0) {
-            add_log("❌ Lỗi khi nhận nội dung key!");
-            std::string error_response = "ERROR: Failed to receive key content";
+        uint32_t key_size;
+        if (recv(client_fd, &key_size, sizeof(key_size), 0) != sizeof(key_size)) {
+            add_log("❌ Lỗi khi nhận kích thước key!");
+            return;
+        }
+        
+        add_log("📥 Kích thước key: " + std::to_string(key_size) + " bytes");
+        
+        if (key_size <= 0 || key_size > 10000) {
+            add_log("❌ Kích thước key không hợp lý!");
+            std::string error_response = "ERROR: Invalid key size";
             send(client_fd, error_response.c_str(), error_response.size(), 0);
             return;
         }
-        total_received += bytes;
-        remaining -= bytes;
         
-        add_log("📥 Đã nhận " + std::to_string(total_received) + "/" + std::to_string(key_size) + " bytes");
-    }
-    
-    // Nhận checksum
-    FD_ZERO(&readfds);
-    FD_SET(client_fd, &readfds);
-    
-    tv.tv_sec = 5;  // 5 giây
-    tv.tv_usec = 0;
-    
-    activity = select(client_fd + 1, &readfds, NULL, NULL, &tv);
-    if (activity <= 0) {
-        add_log("❌ Timeout khi chờ nhận checksum!");
-        return;
-    }
-    
-    char checksum_buffer[33] = {0};
-    if (recv(client_fd, checksum_buffer, 32, 0) != 32) {
-        add_log("❌ Lỗi khi nhận checksum!");
-        std::string error_response = "ERROR: Failed to receive checksum";
-        send(client_fd, error_response.c_str(), error_response.size(), 0);
-        return;
-    }
-    
-    std::string received_checksum(checksum_buffer);
-    add_log("📥 Đã nhận checksum: " + received_checksum);
-    
-    // Nhận end marker
-    FD_ZERO(&readfds);
-    FD_SET(client_fd, &readfds);
-    
-    tv.tv_sec = 5;  // 5 giây
-    tv.tv_usec = 0;
-    
-    activity = select(client_fd + 1, &readfds, NULL, NULL, &tv);
-    if (activity <= 0) {
-        add_log("❌ Timeout khi chờ nhận end marker!");
-        return;
-    }
-    
-    char end_marker[30] = {0};
-    if (recv(client_fd, end_marker, sizeof(end_marker) - 1, 0) <= 0) {
-        add_log("❌ Lỗi khi nhận end marker!");
-        std::string error_response = "ERROR: Failed to receive end marker";
-        send(client_fd, error_response.c_str(), error_response.size(), 0);
-        return;
-    }
-    
-    if (std::string(end_marker) != TRANSMISSION_END_MARKER) {
-        add_log("❌ End marker không đúng!");
-        std::string error_response = "ERROR: Invalid end marker";
-        send(client_fd, error_response.c_str(), error_response.size(), 0);
-        return;
-    }
-    
-    // Lưu key vào file
-    std::string client_key_path = RECEIVED_DIR + std::string("/") + "client_public.key";
-    std::ofstream key_file(client_key_path);
-    if (!key_file) {
-        add_log("❌ Không thể tạo file key!");
-        std::string error_response = "ERROR: Cannot create key file";
-        send(client_fd, error_response.c_str(), error_response.size(), 0);
-        return;
-    }
-    
-    key_file.write(key_buffer.data(), total_received);
-    key_file.close();
-    
-    // Tính và kiểm tra checksum
-    std::string calculated_checksum = calculateMD5Checksum(client_key_path);
-    add_log("🔐 Checksum tính toán: " + calculated_checksum);
-    
-    if (calculated_checksum != received_checksum) {
-        add_log("❌ Checksum không khớp! Dữ liệu có thể bị hỏng.");
-        std::string error_response = "ERROR: Checksum mismatch";
-        send(client_fd, error_response.c_str(), error_response.size(), 0);
-        return;
-    }
-    
-    // Gửi xác nhận thành công
-    std::string success_response = "SUCCESS";
-    if (send(client_fd, success_response.c_str(), success_response.size(), 0) != (ssize_t)success_response.size()) {
-        add_log("❌ Lỗi khi gửi xác nhận thành công!");
-        return;
-    }
-    
-    add_log("✅ Đã nhận và lưu public key từ client!");
-    add_log("📁 Public key lưu tại: " + client_key_path);
-    
-    load_client_public_key(client_key_path);
-    return;
-}
-    // Xử lý nhận file
-    add_log("📥 Đang nhận file...");
-    
-    // Parse thông tin file (tên file|checksum)
-    size_t separator_pos = header_str.find("|");
-    if (separator_pos == std::string::npos) {
-        add_log("❌ Định dạng thông tin file không hợp lệ!");
-        return;
-    }
-    
-    last_original_filename = header_str.substr(0, separator_pos);
-    std::string original_checksum = header_str.substr(separator_pos + 1);
-    
-    add_log("📥 Tên file nhận được: " + last_original_filename);
-    add_log("📥 Checksum file gốc: " + original_checksum);
-    
-    // Gửi phản hồi sẵn sàng
-    std::string ready_response = "READY";
-    if (send(client_fd, ready_response.c_str(), ready_response.size(), 0) != (ssize_t)ready_response.size()) {
-        add_log("❌ Lỗi khi gửi phản hồi sẵn sàng!");
-        return;
-    }
-    
-    // Nhận kích thước khóa DES đã mã hóa
-    uint32_t keySize;
-    if (recv(client_fd, &keySize, sizeof(keySize), 0) != sizeof(keySize)) {
-        add_log("❌ Lỗi khi nhận kích thước khóa DES!");
-        return;
-    }
-    
-    add_log("📥 Nhận kích thước khóa DES đã mã hóa: " + std::to_string(keySize) + " bytes");
-    
-    // Kiểm tra kích thước hợp lý
-    if (keySize <= 0 || keySize > 1024) {
-        add_log("❌ Kích thước khóa không hợp lý!");
-        return;
-    }
-    
-   // Nhận khóa DES đã mã hóa
-    std::vector<uint8_t> encryptedKey(keySize);
-    int total_key_received = 0;
-    
-    while (total_key_received < (int)keySize) {
-        int bytes = recv(client_fd, encryptedKey.data() + total_key_received, keySize - total_key_received, 0);
-        if (bytes <= 0) {
-            add_log("❌ Lỗi khi nhận khóa DES!");
-            return;
+        std::vector<char> key_buffer(key_size + 1, 0);
+        int total_received = 0;
+        int remaining = key_size;
+        
+        while (total_received < (int)key_size) {
+            int bytes = recv(client_fd, key_buffer.data() + total_received, remaining, 0);
+            if (bytes <= 0) {
+                add_log("❌ Lỗi khi nhận nội dung key!");
+                std::string error_response = "ERROR: Failed to receive key content";
+                send(client_fd, error_response.c_str(), error_response.size(), 0);
+                return;
+            }
+            total_received += bytes;
+            remaining -= bytes;
         }
-        total_key_received += bytes;
-    }
-    
-    add_log("📥 Đã nhận khóa DES đã mã hóa: " + std::to_string(total_key_received) + " bytes");
-    
-    // Lưu khóa DES đã mã hóa
-    std::string encrypted_key_file = RECEIVED_DIR + std::string("/") + "encrypted_des_key.bin";
-    std::ofstream key_file(encrypted_key_file, std::ios::binary);
-    if (!key_file) {
-        add_log("❌ Không thể tạo file khóa!");
-        return;
-    }
-    
-    key_file.write(reinterpret_cast<const char*>(encryptedKey.data()), encryptedKey.size());
-    key_file.close();
-    add_log("📁 Đã lưu khóa DES đã mã hóa tại: " + encrypted_key_file);
-    
-    // Nhận checksum của file mã hóa
-    char checksum_buffer[33] = {0};
-    if (recv(client_fd, checksum_buffer, 32, 0) != 32) {
-        add_log("❌ Lỗi khi nhận checksum của file mã hóa!");
-        return;
-    }
-    
-    std::string expected_encrypted_checksum(checksum_buffer);
-    add_log("📥 Checksum file mã hóa: " + expected_encrypted_checksum);
-    
-    // Nhận kích thước file mã hóa
-    int fileSize;
-    if (recv(client_fd, &fileSize, sizeof(fileSize), 0) != sizeof(fileSize)) {
-        add_log("❌ Lỗi khi nhận kích thước file!");
-        return;
-    }
-    
-    add_log("📥 Kích thước file mã hóa: " + std::to_string(fileSize) + " bytes");
-    
-    // Kiểm tra kích thước hợp lý
-    if (fileSize <= 0) {
-        add_log("❌ Kích thước file không hợp lý!");
-        return;
-    }
-    
-    // Gửi phản hồi sẵn sàng nhận file
-    std::string ready_file_response = "READY_FOR_FILE";
-    if (send(client_fd, ready_file_response.c_str(), ready_file_response.size(), 0) != (ssize_t)ready_file_response.size()) {
-        add_log("❌ Lỗi khi gửi phản hồi sẵn sàng nhận file!");
-        return;
-    }
-    
-    // Chuẩn bị file để lưu dữ liệu mã hóa
-    std::string encryptedFile = RECEIVED_DIR + std::string("/") + "received_ciphertext.txt";
-    last_encrypted_file = encryptedFile;
-    
-    std::ofstream file(encryptedFile, std::ios::binary);
-    if (!file) {
-        add_log("❌ Không thể tạo file mã hóa!");
-        return;
-    }
-    
-    // Nhận dữ liệu file mã hóa
-    char buffer[BUFFER_SIZE];
-    int totalBytesReceived = 0;
-    
-    while (totalBytesReceived < fileSize) {
-        int bytesToRead = std::min(BUFFER_SIZE, fileSize - totalBytesReceived);
-        int bytesReceived = recv(client_fd, buffer, bytesToRead, 0);
         
-        if (bytesReceived <= 0) {
-            add_log("❌ Lỗi khi nhận dữ liệu file! Đã nhận: " + std::to_string(totalBytesReceived) + "/" + std::to_string(fileSize) + " bytes");
-            file.close();
+        add_log("📥 Đã nhận " + std::to_string(total_received) + " bytes nội dung key");
+        
+        char checksum_buffer[33] = {0};
+        if (recv(client_fd, checksum_buffer, 32, 0) != 32) {
+            add_log("❌ Lỗi khi nhận checksum!");
+            std::string error_response = "ERROR: Failed to receive checksum";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
             return;
         }
         
-        file.write(buffer, bytesReceived);
-        totalBytesReceived += bytesReceived;
-    }
-    
-    file.close();
-    add_log("✅ Đã nhận file mã hóa! Tổng số byte nhận được: " + std::to_string(totalBytesReceived) + " bytes");
-    
-    // Kiểm tra end marker
-    char end_marker[30] = {0};
-    if (recv(client_fd, end_marker, sizeof(end_marker) - 1, 0) <= 0) {
-        add_log("❌ Lỗi khi nhận end marker!");
+        std::string received_checksum(checksum_buffer);
+        add_log("📥 Đã nhận checksum: " + received_checksum);
+        
+        char end_marker[30] = {0};
+        if (recv(client_fd, end_marker, sizeof(end_marker) - 1, 0) <= 0) {
+            add_log("❌ Lỗi khi nhận end marker!");
+            std::string error_response = "ERROR: Failed to receive end marker";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        if (std::string(end_marker) != TRANSMISSION_END_MARKER) {
+            add_log("❌ End marker không đúng!");
+            std::string error_response = "ERROR: Invalid end marker";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        std::string server_key_path = RECEIVED_DIR + std::string("/") + "server_public.key";
+        std::ofstream key_file(server_key_path);
+        if (!key_file) {
+            add_log("❌ Không thể tạo file key!");
+            std::string error_response = "ERROR: Cannot create key file";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        key_file.write(key_buffer.data(), total_received);
+        key_file.close();
+        
+        std::string calculated_checksum = calculateMD5Checksum(server_key_path);
+        add_log("🔐 Checksum tính toán: " + calculated_checksum);
+        
+        if (calculated_checksum != received_checksum) {
+            add_log("❌ Checksum không khớp! Dữ liệu có thể bị hỏng.");
+            std::string error_response = "ERROR: Checksum mismatch";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        std::string success_response = "SUCCESS";
+        if (send(client_fd, success_response.c_str(), success_response.size(), 0) != (ssize_t)success_response.size()) {
+            add_log("❌ Lỗi khi gửi xác nhận thành công!");
+            return;
+        }
+        
+        add_log("✅ Đã nhận và lưu public key từ server!");
+        add_log("📁 Public key lưu tại: " + server_key_path);
+        
+        load_server_keys();
         return;
     }
-    
-    if (std::string(end_marker) != TRANSMISSION_END_MARKER) {
-        add_log("❌ End marker không đúng!");
-        std::string error_response = "ERROR: Invalid end marker";
-        send(client_fd, error_response.c_str(), error_response.size(), 0);
+    else if (header_str == "CLIENT_PUBLIC_KEY_TRANSFER") {
+        add_log("📥 Nhận yêu cầu truyền public key từ client");
+        
+        std::string ready_response = "READY";
+        if (send(client_fd, ready_response.c_str(), ready_response.size(), 0) != (ssize_t)ready_response.size()) {
+            add_log("❌ Lỗi khi gửi phản hồi sẵn sàng!");
+            return;
+        }
+        
+        uint32_t key_size_network;
+        if (recv(client_fd, &key_size_network, sizeof(key_size_network), 0) != sizeof(key_size_network)) {
+            add_log("❌ Lỗi khi nhận kích thước key!");
+            return;
+        }
+        
+        uint32_t key_size = ntohl(key_size_network);
+        
+        add_log("📥 Kích thước key: " + std::to_string(key_size) + " bytes");
+        
+        if (key_size <= 0 || key_size > 10000) {
+            add_log("❌ Kích thước key không hợp lý!");
+            std::string error_response = "ERROR: Invalid key size";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        std::string size_ok_response = "SIZE_OK";
+        if (send(client_fd, size_ok_response.c_str(), size_ok_response.size(), 0) != (ssize_t)size_ok_response.size()) {
+            add_log("❌ Lỗi khi gửi xác nhận kích thước!");
+            return;
+        }
+        
+        std::vector<char> key_buffer(key_size + 1, 0);
+        int total_received = 0;
+        int remaining = key_size;
+        
+        while (total_received < (int)key_size) {
+            int bytes = recv(client_fd, key_buffer.data() + total_received, remaining, 0);
+            if (bytes <= 0) {
+                add_log("❌ Lỗi khi nhận nội dung key!");
+                std::string error_response = "ERROR: Failed to receive key content";
+                send(client_fd, error_response.c_str(), error_response.size(), 0);
+                return;
+            }
+            total_received += bytes;
+            remaining -= bytes;
+        }
+        
+        add_log("📥 Đã nhận " + std::to_string(total_received) + " bytes nội dung key");
+        
+        char checksum_buffer[33] = {0};
+        if (recv(client_fd, checksum_buffer, 32, 0) != 32) {
+            add_log("❌ Lỗi khi nhận checksum!");
+            std::string error_response = "ERROR: Failed to receive checksum";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        std::string received_checksum(checksum_buffer);
+        add_log("📥 Đã nhận checksum: " + received_checksum);
+        
+        char end_marker[30] = {0};
+        if (recv(client_fd, end_marker, sizeof(end_marker) - 1, 0) <= 0) {
+            add_log("❌ Lỗi khi nhận end marker!");
+            std::string error_response = "ERROR: Failed to receive end marker";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        if (std::string(end_marker) != TRANSMISSION_END_MARKER) {
+            add_log("❌ End marker không đúng!");
+            std::string error_response = "ERROR: Invalid end marker";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        std::string client_key_path = RECEIVED_DIR + std::string("/") + "client_public.key";
+        std::ofstream key_file(client_key_path, std::ios::binary);
+        if (!key_file) {
+            add_log("❌ Không thể tạo file key!");
+            std::string error_response = "ERROR: Cannot create key file";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        key_file.write(key_buffer.data(), total_received);
+        key_file.close();
+        
+        std::string calculated_checksum = calculateMD5Checksum(client_key_path);
+        add_log("🔐 Checksum tính toán: " + calculated_checksum);
+        
+        if (calculated_checksum != received_checksum) {
+            add_log("❌ Checksum không khớp! Dữ liệu có thể bị hỏng.");
+            std::string error_response = "ERROR: Checksum mismatch";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        std::string success_response = "SUCCESS";
+        if (send(client_fd, success_response.c_str(), success_response.size(), 0) != (ssize_t)success_response.size()) {
+            add_log("❌ Lỗi khi gửi xác nhận thành công!");
+            return;
+        }
+        
+        add_log("✅ Đã nhận và lưu public key từ client!");
+        add_log("📁 Public key lưu tại: " + client_key_path);
+        
+        load_client_public_key(client_key_path);
         return;
     }
-    
-    // Kiểm tra checksum của file mã hóa đã nhận
-    std::string calculated_encrypted_checksum = calculateMD5Checksum(encryptedFile);
-    add_log("🔐 Checksum tính toán của file mã hóa: " + calculated_encrypted_checksum);
-    
-    if (calculated_encrypted_checksum != expected_encrypted_checksum) {
-        add_log("❌ Checksum file mã hóa không khớp! Dữ liệu có thể bị hỏng.");
-        std::string error_response = "ERROR: Encrypted file checksum mismatch";
-        send(client_fd, error_response.c_str(), error_response.size(), 0);
-        return;
+    else {
+        add_log("📥 Đang nhận file...");
+        
+        size_t separator_pos = header_str.find("|");
+        if (separator_pos == std::string::npos) {
+            add_log("❌ Định dạng thông tin file không hợp lệ!");
+            return;
+        }
+        
+        last_original_filename = header_str.substr(0, separator_pos);
+        std::string original_checksum = header_str.substr(separator_pos + 1);
+        
+        add_log("📥 Tên file nhận được: " + last_original_filename);
+        add_log("📥 Checksum file gốc: " + original_checksum);
+        
+        std::string ready_response = "READY";
+        if (send(client_fd, ready_response.c_str(), ready_response.size(), 0) != (ssize_t)ready_response.size()) {
+            add_log("❌ Lỗi khi gửi phản hồi sẵn sàng!");
+            return;
+        }
+        
+        uint32_t keySize;
+        if (recv(client_fd, &keySize, sizeof(keySize), 0) != sizeof(keySize)) {
+            add_log("❌ Lỗi khi nhận kích thước khóa DES!");
+            return;
+        }
+        
+        add_log("📥 Nhận kích thước khóa DES đã mã hóa: " + std::to_string(keySize) + " bytes");
+        
+        if (keySize <= 0 || keySize > 1024) {
+            add_log("❌ Kích thước khóa không hợp lý!");
+            return;
+        }
+        
+        std::vector<uint8_t> encryptedKey(keySize);
+        int total_key_received = 0;
+        
+        while (total_key_received < (int)keySize) {
+            int bytes = recv(client_fd, encryptedKey.data() + total_key_received, keySize - total_key_received, 0);
+            if (bytes <= 0) {
+                add_log("❌ Lỗi khi nhận khóa DES!");
+                return;
+            }
+            total_key_received += bytes;
+        }
+        
+        add_log("📥 Đã nhận khóa DES đã mã hóa: " + std::to_string(total_key_received) + " bytes");
+        
+        std::string encrypted_key_file = RECEIVED_DIR + std::string("/") + "encrypted_des_key.bin";
+        std::ofstream key_file(encrypted_key_file, std::ios::binary);
+        if (!key_file) {
+            add_log("❌ Không thể tạo file khóa!");
+            return;
+        }
+        
+        key_file.write(reinterpret_cast<const char*>(encryptedKey.data()), encryptedKey.size());
+        key_file.close();
+        add_log("📁 Đã lưu khóa DES đã mã hóa tại: " + encrypted_key_file);
+        
+        char checksum_buffer[33] = {0};
+        if (recv(client_fd, checksum_buffer, 32, 0) != 32) {
+            add_log("❌ Lỗi khi nhận checksum của file mã hóa!");
+            return;
+        }
+        
+        std::string expected_encrypted_checksum(checksum_buffer);
+        add_log("📥 Checksum file mã hóa: " + expected_encrypted_checksum);
+        
+       int fileSize;
+        if (recv(client_fd, &fileSize, sizeof(fileSize), 0) != sizeof(fileSize)) {
+            add_log("❌ Lỗi khi nhận kích thước file!");
+            return;
+        }
+        
+        add_log("📥 Kích thước file mã hóa: " + std::to_string(fileSize) + " bytes");
+        
+        if (fileSize <= 0) {
+            add_log("❌ Kích thước file không hợp lý!");
+            return;
+        }
+        
+        std::string ready_file_response = "READY_FOR_FILE";
+        if (send(client_fd, ready_file_response.c_str(), ready_file_response.size(), 0) != (ssize_t)ready_file_response.size()) {
+            add_log("❌ Lỗi khi gửi phản hồi sẵn sàng nhận file!");
+            return;
+        }
+        
+        std::string encryptedFile = RECEIVED_DIR + std::string("/") + "received_ciphertext.txt";
+        last_encrypted_file = encryptedFile;
+        
+        std::ofstream file(encryptedFile, std::ios::binary);
+        if (!file) {
+            add_log("❌ Không thể tạo file mã hóa!");
+            return;
+        }
+        
+        char buffer[BUFFER_SIZE];
+        int totalBytesReceived = 0;
+        
+        while (totalBytesReceived < fileSize) {
+            int bytesToRead = std::min(BUFFER_SIZE, fileSize - totalBytesReceived);
+            int bytesReceived = recv(client_fd, buffer, bytesToRead, 0);
+            
+            if (bytesReceived <= 0) {
+                add_log("❌ Lỗi khi nhận dữ liệu file! Đã nhận: " + std::to_string(totalBytesReceived) + "/" + std::to_string(fileSize) + " bytes");
+                file.close();
+                return;
+            }
+            
+            file.write(buffer, bytesReceived);
+            totalBytesReceived += bytesReceived;
+        }
+        
+        file.close();
+        add_log("✅ Đã nhận file mã hóa! Tổng số byte nhận được: " + std::to_string(totalBytesReceived) + " bytes");
+        
+        char end_marker[30] = {0};
+        if (recv(client_fd, end_marker, sizeof(end_marker) - 1, 0) <= 0) {
+            add_log("❌ Lỗi khi nhận end marker!");
+            return;
+        }
+        
+        if (std::string(end_marker) != TRANSMISSION_END_MARKER) {
+            add_log("❌ End marker không đúng!");
+            std::string error_response = "ERROR: Invalid end marker";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        std::string calculated_encrypted_checksum = calculateMD5Checksum(encryptedFile);
+        add_log("🔐 Checksum tính toán của file mã hóa: " + calculated_encrypted_checksum);
+        
+        if (calculated_encrypted_checksum != expected_encrypted_checksum) {
+            add_log("❌ Checksum file mã hóa không khớp! Dữ liệu có thể bị hỏng.");
+            std::string error_response = "ERROR: Encrypted file checksum mismatch";
+            send(client_fd, error_response.c_str(), error_response.size(), 0);
+            return;
+        }
+        
+        add_log("✅ Checksum file mã hóa khớp!");
+        add_log("📁 File đã được lưu tại: " + encryptedFile);
+        file_received = true;
+        
+        std::string success_response = "SUCCESS";
+        send(client_fd, success_response.c_str(), success_response.size(), 0);
+        
+        gdk_threads_add_idle([](gpointer data) -> gboolean {
+            gtk_label_set_text(GTK_LABEL(status_label), "Đã nhận file mã hóa thành công!");
+            gtk_widget_set_sensitive(view_encrypted_button, TRUE);
+            gtk_widget_set_sensitive(view_encrypted_key_button, TRUE);
+            gtk_widget_set_sensitive(decrypt_rsa_button, TRUE);
+            return FALSE;
+        }, NULL);
     }
-    
-    add_log("✅ Checksum file mã hóa khớp!");
-    add_log("📁 File đã được lưu tại: " + encryptedFile);
-    file_received = true;
-    
-    // Gửi xác nhận thành công
-    std::string success_response = "SUCCESS";
-    send(client_fd, success_response.c_str(), success_response.size(), 0);
-    
-    gdk_threads_add_idle([](gpointer data) -> gboolean {
-        gtk_label_set_text(GTK_LABEL(status_label), "Đã nhận file mã hóa thành công!");
-        gtk_widget_set_sensitive(view_encrypted_button, TRUE);
-        gtk_widget_set_sensitive(view_encrypted_key_button, TRUE);
-        gtk_widget_set_sensitive(decrypt_rsa_button, TRUE);
-        return FALSE;
-    }, NULL);
 }
-
+        
 static void decrypt_rsa(GtkWidget *widget, gpointer data) {
     if (!file_received) {
         add_log("❌ Không có file để giải mã!");
@@ -1178,46 +1209,69 @@ static void decrypt_rsa(GtkWidget *widget, gpointer data) {
     gtk_widget_set_sensitive(decrypt_button, TRUE);
 }
 
-static void decrypt_des(GtkWidget *widget, gpointer data) {
+// Hàm giải mã DES chạy trong luồng riêng
+void decrypt_des_thread(GtkWidget *widget) {  // Truyền widget vào hàm
     if (!has_decrypted_des_key || !file_received) {
         add_log("❌ Không thể giải mã DES! Chưa giải mã RSA hoặc không có file.");
+        gdk_threads_add_idle([](gpointer data) -> gboolean {
+            gtk_widget_set_sensitive(decrypt_button, TRUE);
+            return FALSE;
+        }, NULL);
         return;
     }
-    
+
     add_log("🔄 Đang giải mã file với khóa DES...");
-    
+
     if (decrypted_des_key.size() != 8) {
         add_log("⚠️ Cảnh báo: Kích thước khóa DES không phải 8 bytes!");
     }
-    
-    std::vector<uint8_t> binSessionKey = convertByteToBit(decrypted_des_key);
+
+     std::vector<uint8_t> binSessionKey = convertByteToBit(decrypted_des_key);
     add_log("Đã chuyển đổi khóa DES thành " + std::to_string(binSessionKey.size()) + " bits");
-    
     add_log("Đang giải mã file: " + last_encrypted_file);
     last_decrypted_file = DECRYPTED_DIR + std::string("/") + "decrypted_" + last_original_filename;
     add_log("Sẽ lưu tại: " + last_decrypted_file);
-    
+
     try {
         decryptFile(last_encrypted_file, last_decrypted_file, binSessionKey);
-        
+
         struct stat buffer;
         if (stat(last_decrypted_file.c_str(), &buffer) == 0) {
             file_decrypted = true;
             add_log("✅ Đã giải mã file thành công!");
             add_log("📁 File đã giải mã được lưu tại: " + last_decrypted_file);
             add_log("📌 Kích thước file đã giải mã: " + std::to_string(buffer.st_size) + " bytes");
-            
-            // Kiểm tra file đã giải mã
+
             std::string decrypted_checksum = calculateMD5Checksum(last_decrypted_file);
             add_log("🔐 Checksum file đã giải mã: " + decrypted_checksum);
-            
-            gtk_widget_set_sensitive(view_decrypted_button, TRUE);
+
+            // Cập nhật UI từ luồng chính
+            gdk_threads_add_idle([](gpointer data) -> gboolean {
+                gtk_widget_set_sensitive(view_decrypted_button, TRUE);
+                return FALSE;
+            }, NULL);
         } else {
             add_log("❌ Giải mã thất bại: Không tìm thấy file đã giải mã!");
         }
     } catch (const std::exception& e) {
         add_log("❌ Lỗi khi giải mã: " + std::string(e.what()));
     }
+
+    // Kích hoạt lại nút "Giải mã DES" sau khi hoàn tất
+    gdk_threads_add_idle([](gpointer data) -> gboolean {
+        gtk_widget_set_sensitive(decrypt_button, TRUE);
+        return FALSE;
+    }, NULL);
+}
+
+// Callback cho nút "Giải mã DES"
+static void decrypt_des(GtkWidget *widget, gpointer data) {
+    gtk_widget_set_sensitive(decrypt_button, FALSE); // Vô hiệu hóa nút trong khi giải mã
+    add_log("🔄 Bắt đầu giải mã DES trong luồng riêng...");
+
+    // Chạy giải mã trong luồng riêng, truyền widget vào
+    std::thread decrypt_thread(decrypt_des_thread, widget);
+    decrypt_thread.detach(); // Tách luồng để nó chạy độc lập
 }
 
 void server_function() {
